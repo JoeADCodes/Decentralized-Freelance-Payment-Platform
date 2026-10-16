@@ -256,6 +256,12 @@ docker compose up --build
 | Backend | <http://localhost:3000> (`GET /health`) |
 | PostgreSQL | `localhost:5432` |
 
+The frontend **image** is built with `VITE_API_URL=""`, so the app calls the API
+on its own origin and nginx proxies `/api/` to the `backend` service
+(`frontend/nginx.conf`). Nothing has to know the backend's address in the
+browser, and the API is reachable both directly (<http://localhost:3000>) and
+through the frontend (<http://localhost:5173/api/jobs>) — issue #55.
+
 Pass contract ids through the environment to bake them into the frontend image:
 
 ```bash
@@ -303,7 +309,7 @@ not just a restart.
 | `VITE_ESCROW_CONTRACT_ID` | ✅ | Deployed escrow contract |
 | `VITE_DISPUTE_CONTRACT_ID` | ✅ | Deployed dispute contract |
 | `VITE_REPUTATION_CONTRACT_ID` | ✅ | Deployed reputation contract |
-| `VITE_API_URL` | for hosted deploys | Backend origin; defaults to `http://localhost:3000` |
+| `VITE_API_URL` | for hosted deploys | Backend origin. Unset → `http://localhost:3000`; **empty** → same-origin `/api/...`, which the container image uses to reach the backend through its nginx proxy |
 | `VITE_XLM_CONTRACT_ID` | to pay in XLM | Testnet XLM SAC: `CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC` |
 | `VITE_USDC_CONTRACT_ID` | to pay in USDC | Empty until a USDC SAC is configured on testnet |
 

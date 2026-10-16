@@ -10,6 +10,17 @@
  * - `totalAmountUsdc`/`escrowId` come from Prisma and may serialize as strings.
  */
 
+/*
+ * Vite inlines `VITE_*` at build time, so an **empty** value is meaningful and
+ * different from an unset one:
+ *
+ *  - unset  → `http://localhost:3000`, the local development backend;
+ *  - `""`   → every request is same-origin (`/api/jobs`), which is how the
+ *             containerised app reaches the API: nginx (frontend/nginx.conf)
+ *             proxies `/api/` to the `backend` service, a name that only
+ *             resolves inside the compose network (issue #55);
+ *  - a URL  → used as-is, e.g. the hosted backend origin on Vercel.
+ */
 export const API_BASE_URL = import.meta.env.VITE_API_URL ?? "http://localhost:3000";
 
 export interface JobListQuery {

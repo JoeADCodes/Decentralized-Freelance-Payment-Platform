@@ -88,6 +88,12 @@ inlines them at build time, so **changing any of them requires a redeploy**:
 Without `VITE_API_URL` the app falls back to `http://localhost:3000`
 (`frontend/src/lib/api.ts`) and the job list will fail for every visitor.
 
+This is the opposite of the Docker Compose setup, where `VITE_API_URL` is set to
+the **empty** string on purpose: the containerised app then calls `/api/...` on
+its own origin and nginx proxies those requests to the `backend` service
+(`frontend/nginx.conf`, `docker-compose.yml`) — issue #55. Vercel has no such
+proxy, so it needs the absolute backend origin above.
+
 ## 3. Backend → container host
 
 [`../render.yaml`](../render.yaml) is a Render Blueprint for this service. In the

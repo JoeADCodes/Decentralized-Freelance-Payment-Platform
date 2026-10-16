@@ -5,6 +5,10 @@
 # Backend:  http://localhost:3000  (GET /health)
 # Frontend: http://localhost:5173
 #
+# The frontend image is built with VITE_API_URL="", so the app calls the API on
+# its own origin and nginx forwards /api/ to the backend service. The API is
+# therefore also reachable through the frontend: http://localhost:5173/api/jobs.
+#
 # Contract addresses are optional here; set them in the shell or in a root
 # `.env` file to bake them into the frontend image, e.g.:
 #   VITE_ESCROW_CONTRACT_ID=C... docker compose up --build
@@ -66,6 +70,11 @@ services:
       dockerfile: Dockerfile
       args:
         VITE_NETWORK: ${VITE_NETWORK:-testnet}
+        # Empty on purpose: the app then calls `/api/...` on its own origin and
+        # nginx proxies it to `backend:3000` (issue #55). An absolute URL here
+        # would make the browser reach for the backend service name, which only
+        # resolves inside the compose network.
+        VITE_API_URL: ""
         VITE_ESCROW_CONTRACT_ID: ${VITE_ESCROW_CONTRACT_ID:-}
         VITE_DISPUTE_CONTRACT_ID: ${VITE_DISPUTE_CONTRACT_ID:-}
         VITE_REPUTATION_CONTRACT_ID: ${VITE_REPUTATION_CONTRACT_ID:-}
