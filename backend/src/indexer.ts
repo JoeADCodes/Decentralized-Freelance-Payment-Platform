@@ -49,7 +49,6 @@ import { config } from "./config";
 import { prisma } from "./db";
 import {
   KNOWN_EVENTS,
-  decodeEventData,
   decodeEventFields,
   decodeEventName,
   type ContractEventLike,

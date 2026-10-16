@@ -9,6 +9,7 @@
 
 import { Router } from "express";
 import { z } from "zod";
+import type { JobStatus } from "@prisma/client";
 import { prisma } from "../db";
 import { requireAuth } from "../middleware/auth";
 import { validate } from "../middleware/validate";
@@ -31,7 +32,10 @@ jobsRouter.get("/", async (req, res, next) => {
     const { status, client, freelancer, page = "1", limit = "20" } = req.query;
     const jobs = await prisma.job.findMany({
       where: {
-        ...(status ? { status: String(status) as any } : {}),
+        // `?status=` is a Prisma enum column, so the value has to be narrowed to
+        // `JobStatus` rather than cast to `any` — an invalid value is then a
+        // Prisma validation error, not a silently erased type (issue #54).
+        ...(status ? { status: String(status) as JobStatus } : {}),
         ...(client ? { client: { stellarAddress: String(client) } } : {}),
         ...(freelancer ? { freelancer: { stellarAddress: String(freelancer) } } : {}),
       },

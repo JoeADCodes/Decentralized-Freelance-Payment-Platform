@@ -42,6 +42,7 @@ import {
   SorobanRpc,
   TransactionBuilder,
   BASE_FEE,
+  xdr,
 } from "@stellar/stellar-sdk";
 import type { Dispute, Job, User } from "@prisma/client";
 import { config } from "../config";
@@ -70,9 +71,11 @@ const networkPassphrase =
  * a caller mistake (wrong state, not a party), not an internal failure, so it is
  * answered as a named 400 rather than a raw host string.
  */
+// `xdr.Operation` (not `any`) is what `Contract.call(...)` returns and what
+// `addOperation` accepts, so a wrong call site fails to compile (issue #54).
 async function buildTx(
   sourceAddress: string,
-  operation: any,
+  operation: xdr.Operation,
   messages: Record<number, string>,
 ): Promise<string> {
   const account = await server.getAccount(sourceAddress);

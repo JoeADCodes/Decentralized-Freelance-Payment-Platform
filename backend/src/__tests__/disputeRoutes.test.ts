@@ -21,7 +21,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import express from "express";
 import type { Server } from "node:http";
-import { Account, Address, Keypair, scValToNative, xdr } from "@stellar/stellar-sdk";
+import { Address, Keypair, scValToNative } from "@stellar/stellar-sdk";
 import type { Transaction } from "@stellar/stellar-sdk";
 import { SignJWT } from "jose";
 
