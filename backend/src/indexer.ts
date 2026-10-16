@@ -32,6 +32,10 @@
  *   - `resolved` sets both the job (COMPLETED) and its dispute (RESOLVED);
  *     `REFUNDED` and `RESOLVED` are the two terminal dispute states.
  *
+ * Every recognised event also feeds the participants' notification lists
+ * (issue #66) — see `applyEventNotifications`. That write is best-effort and
+ * cannot affect the state handlers below.
+ *
  * Contributor Notes:
  * - The cursor (last scanned ledger) is persisted in IndexerCursor, so the
  *   indexer resumes after a restart and does not reprocess applied ledgers.
@@ -47,6 +51,7 @@ import { SorobanRpc } from "@stellar/stellar-sdk";
 import type { DisputeStatus, JobStatus } from "@prisma/client";
 import { config } from "./config";
 import { prisma } from "./db";
+import { formatBaseUnitsForAsset } from "./lib/assets";
 import {
   KNOWN_EVENTS,
   decodeEventFields,
@@ -307,6 +312,17 @@ async function dispatchEvent(event: ContractEventLike): Promise<void> {
   if (!name || !KNOWN_EVENTS.has(name)) return; // unknown events are ignored
 
   const data = decodeEventFields(event, EVENT_TOPIC_FIELDS[name] ?? []);
+
+  // Feed the participants' notification lists (issue #66). Best-effort: a feed
+  // failure must not stop the state mirror below from being updated. A missing
+  // notification is recoverable by replaying the event; a skipped state change
+  // is what the dead-letter table exists for.
+  try {
+    await applyEventNotifications(notificationStores(), event, name, data);
+  } catch (err) {
+    console.error(`[indexer] could not create notifications for event ${event.id ?? "?"}`, err);
+  }
+
   switch (name) {
     case "created":
       await handleCreated(data);
@@ -353,6 +369,201 @@ function asNumber(value: unknown): number | null {
 
 function asAddress(value: unknown): string | null {
   return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+// ---------------------------------------------------------------------------
+// Notifications (issue #66)
+// ---------------------------------------------------------------------------
+
+/** The job fields a notification needs: who to tell, and in which asset. */
+export interface NotificationJob {
+  id: string;
+  asset: string;
+  client: { stellarAddress: string } | null;
+  freelancer: { stellarAddress: string } | null;
+}
+
+/** One row of the per-user feed. */
+export interface NotificationRow {
+  id: string;
+  address: string;
+  type: string;
+  title: string;
+  body: string | null;
+  escrowId: bigint;
+  jobId: string;
+}
+
+/**
+ * The slice of `prisma` the notification feed writes through, kept structural so
+ * the wording and the recipient resolution are unit-testable with an in-memory
+ * store instead of a database (the same approach as `RatedStores`).
+ *
+ * `findUnique` is declared with the relations the feed needs, because the real
+ * call has to `include` them: without that, `client`/`freelancer` are absent and
+ * every event would resolve to zero recipients.
+ */
+export interface NotificationStores {
+  job: {
+    findUnique(args: {
+      where: { escrowId: bigint };
+      include: { client: true; freelancer: true };
+    }): Promise<NotificationJob | null>;
+  };
+  notification: {
+    createMany(args: {
+      data: NotificationRow[];
+      skipDuplicates?: boolean;
+    }): Promise<{ count: number }>;
+  };
+}
+
+/** Human wording for one notified event. */
+export interface NotificationText {
+  title: string;
+  body: string | null;
+}
+
+/** `12.5 USDC` for a base-unit amount, or `null` when the event carries none. */
+function amountText(value: unknown, asset: string): string | null {
+  const base = asBigInt(value);
+  if (base === null) return null;
+  return `${formatBaseUnitsForAsset(base, asset)} ${asset}`;
+}
+
+/**
+ * The events a user is told about, and the wording of each — the feed covers
+ * funded, released, disputed and resolved (issue #66), plus a refund, which is
+ * the same kind of terminal news.
+ *
+ * `created` (the client just did it), `rated` (both parties are present when it
+ * happens) and the bookkeeping events are deliberately left out so the feed is
+ * about things that changed *under* someone rather than a log of everything.
+ *
+ * Exported for the unit tests; returns `null` for an event nobody is told about.
+ */
+export function notificationText(
+  name: string,
+  data: Record<string, unknown>,
+  asset: string,
+): NotificationText | null {
+  const amount = amountText(data.amount, asset);
+
+  switch (name) {
+    case "funded":
+      return {
+        title: "Escrow funded",
+        body:
+          amount === null
+            ? "The escrow is funded — work can start."
+            : `${amount} is now held in escrow — work can start.`,
+      };
+    case "milestone_released": {
+      const index = asNumber(data.index);
+      const label = index === null ? "A milestone" : `Milestone ${index + 1}`;
+      return {
+        title: index === null ? "Milestone released" : `Milestone ${index + 1} released`,
+        body:
+          amount === null
+            ? `${label} was released to the freelancer.`
+            : `${label} · ${amount} released to the freelancer.`,
+      };
+    }
+    case "dispute_opened":
+      return {
+        title: "Dispute opened",
+        body: "The escrow is frozen pending arbitration.",
+      };
+    case "resolved":
+    case "dispute_resolved": {
+      const clientShare = amountText(data.client_share, asset);
+      const freelancerShare = amountText(data.freelancer_share, asset);
+      const split =
+        clientShare === null || freelancerShare === null
+          ? ""
+          : ` Client ${clientShare}, freelancer ${freelancerShare}.`;
+      return { title: "Dispute resolved", body: `The arbitrators ruled.${split}` };
+    }
+    case "refunded":
+      return {
+        title: "Escrow refunded",
+        body:
+          amount === null
+            ? "The escrow was refunded to the client."
+            : `${amount} was refunded to the client.`,
+      };
+    default:
+      return null;
+  }
+}
+
+/** Everyone who should hear about an event on a job, without duplicates. */
+export function notificationRecipients(job: NotificationJob): string[] {
+  return [
+    ...new Set(
+      [job.client?.stellarAddress, job.freelancer?.stellarAddress].filter(
+        (address): address is string => typeof address === "string" && address.length > 0,
+      ),
+    ),
+  ];
+}
+
+/**
+ * Write the feed rows for one event and return how many recipients were told.
+ *
+ * Both participants are notified, including whoever caused the event: knowing
+ * your own transaction landed is exactly what the current UI cannot show without
+ * a reload, which is the complaint behind issue #66.
+ *
+ * Rows are keyed `<event id>:<address>` and inserted with `skipDuplicates`, so a
+ * cursor rewind re-indexing the same event cannot duplicate a feed entry.
+ *
+ * Returns 0 — doing nothing — for an event users are not told about, an event
+ * with no escrow, an escrow with no off-chain job (there is nobody to address
+ * the row to), and a job with no parties recorded.
+ */
+export async function applyEventNotifications(
+  db: NotificationStores,
+  event: ContractEventLike,
+  name: string,
+  data: Record<string, unknown>,
+): Promise<number> {
+  const escrowId = asBigInt(data.escrow_id);
+  if (escrowId === null) return 0;
+
+  const job = await db.job.findUnique({
+    where: { escrowId },
+    include: { client: true, freelancer: true },
+  });
+  if (!job) return 0;
+
+  // The wording needs the job's asset, so it is built after the lookup.
+  const rendered = notificationText(name, data, job.asset);
+  if (!rendered) return 0;
+
+  const recipients = notificationRecipients(job);
+  if (recipients.length === 0) return 0;
+
+  const eventId = event.id ?? `${event.ledger}-${name}-${escrowId}`;
+  await db.notification.createMany({
+    data: recipients.map((address) => ({
+      id: `${eventId}:${address}`,
+      address,
+      type: name,
+      title: rendered.title,
+      body: rendered.body,
+      escrowId,
+      jobId: job.id,
+    })),
+    skipDuplicates: true,
+  });
+
+  return recipients.length;
+}
+
+/** The store the notification feed writes through (see `NotificationStores`). */
+function notificationStores(): NotificationStores {
+  return prisma as unknown as NotificationStores;
 }
 
 async function handleCreated(data: Record<string, unknown>): Promise<void> {

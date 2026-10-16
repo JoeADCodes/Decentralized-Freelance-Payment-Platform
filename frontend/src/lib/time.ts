@@ -31,3 +31,30 @@ export function formatRemaining(seconds: number): string {
 export function formatDeadline(deadline: bigint): string {
   return new Date(Number(deadline) * 1000).toLocaleString();
 }
+
+/**
+ * A short "how long ago" label for a past timestamp, e.g. `just now`, `5m ago`,
+ * `3h ago`, `2d ago`.
+ *
+ * The notification feed is read top-down and news is only interesting while it
+ * is fresh, so it shows age rather than a wall-clock time. `nowMs` is passed in
+ * rather than read from the clock so the wording is testable.
+ *
+ * Anything older than a week falls back to the local date, which says more than
+ * `63d ago` does. A timestamp in the future (a clock difference between the
+ * server and the browser) reads as `just now` rather than a negative age.
+ */
+export function formatRelativeTime(iso: string, nowMs: number): string {
+  const then = Date.parse(iso);
+  if (Number.isNaN(then)) return "";
+
+  const seconds = Math.floor((nowMs - then) / 1000);
+  if (seconds < 60) return "just now";
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  if (days < 7) return `${days}d ago`;
+  return new Date(then).toLocaleDateString();
+}

@@ -195,6 +195,35 @@ fieldset {
   border-bottom: 1px solid var(--border);
 }
 
+/* --- Directory + notification feed -------------------------------------- */
+
+.directory-list,
+.notification-list {
+  list-style: none;
+  padding: 0;
+}
+
+.directory-list li,
+.notification-list li {
+  padding: 0.75rem 0;
+  border-bottom: 1px solid var(--border);
+}
+
+/* An unread notification is marked with a stripe as well as weight, so it is
+   distinguishable without relying on colour alone. */
+.notification-unread {
+  border-left: 3px solid var(--accent);
+  padding-left: 0.6rem;
+}
+
+.notification-body {
+  margin: 0.25rem 0;
+}
+
+.notification-actions {
+  margin: 0.25rem 0 0;
+}
+
 /* --- Addresses ---------------------------------------------------------- */
 
 /* A full G… address is 56 characters and must not stretch a list row. */

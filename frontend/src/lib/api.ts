@@ -232,6 +232,139 @@ export async function createDispute(
   return (await res.json()) as { dispute: DisputeApi; xdr: string };
 }
 
+// ---------------------------------------------------------------------------
+// Directory (issue #68)
+// ---------------------------------------------------------------------------
+
+/** One entry of the public directory, as `GET /api/users` serializes it. */
+export interface DirectoryUser {
+  id: string;
+  stellarAddress: string;
+  displayName: string | null;
+  bio: string | null;
+  createdAt: string;
+  /** Mean rating, `0` for an address nobody has rated. */
+  averageScore: number;
+  /** How many ratings the average is over. */
+  totalRatings: number;
+  jobsAsFreelancer: number;
+  jobsAsClient: number;
+}
+
+export interface DirectoryResult {
+  users: DirectoryUser[];
+  page: number;
+  limit: number;
+  /** The whole filtered directory, not just this page. */
+  total: number;
+  hasMore: boolean;
+  sort: string;
+  order: string;
+}
+
+/** Sort keys the API accepts; the page maps these to labels. */
+export const DIRECTORY_SORTS = ["reputation", "ratings", "jobs", "name", "joined"] as const;
+export type DirectorySort = (typeof DIRECTORY_SORTS)[number];
+
+export interface DirectoryQuery {
+  q?: string;
+  sort?: DirectorySort;
+  order?: "asc" | "desc";
+  page?: number;
+  limit?: number;
+}
+
+/** Build the `/api/users` query string, omitting empty values. */
+export function buildDirectoryQuery(query: DirectoryQuery = {}): string {
+  const params = new URLSearchParams();
+  if (query.q) params.set("q", query.q);
+  if (query.sort) params.set("sort", query.sort);
+  if (query.order) params.set("order", query.order);
+  if (query.page !== undefined) params.set("page", String(query.page));
+  if (query.limit !== undefined) params.set("limit", String(query.limit));
+  const qs = params.toString();
+  return qs ? `?${qs}` : "";
+}
+
+/** Browse the directory. Public — no token, and no address parameter. */
+export async function fetchDirectory(
+  query: DirectoryQuery = {},
+  signal?: AbortSignal,
+): Promise<DirectoryResult> {
+  const res = await fetch(`${API_BASE_URL}/api/users${buildDirectoryQuery(query)}`, { signal });
+  if (!res.ok) throw new Error(`Could not load the directory (HTTP ${res.status})`);
+  return (await res.json()) as DirectoryResult;
+}
+
+// ---------------------------------------------------------------------------
+// Notification feed (issue #66)
+// ---------------------------------------------------------------------------
+
+/**
+ * One row of the caller's feed, as `GET /api/notifications` serializes it.
+ *
+ * `escrowId` arrives as a string (a Prisma `BigInt` cannot be JSON numbers) and
+ * is only used for the link to the job, so it is not parsed back.
+ */
+export interface NotificationApi {
+  id: string;
+  /** Indexed event name (`funded`, `milestone_released`, …) — docs/EVENTS.md. */
+  type: string;
+  title: string;
+  body: string | null;
+  escrowId: string | null;
+  jobId: string | null;
+  /** ISO timestamp once read, `null` while unread. */
+  readAt: string | null;
+  createdAt: string;
+}
+
+export interface NotificationFeed {
+  /** Total unread rows of the caller, not just the ones in this page. */
+  unread: number;
+  notifications: NotificationApi[];
+}
+
+/**
+ * Fetch the caller's feed. The address comes from the token, so there is no
+ * parameter to pass — a feed is personal and cannot be requested for someone else.
+ */
+export async function fetchNotifications(
+  token: string,
+  signal?: AbortSignal,
+): Promise<NotificationFeed> {
+  const res = await fetch(`${API_BASE_URL}/api/notifications`, {
+    headers: { Authorization: `Bearer ${token}` },
+    signal,
+  });
+  if (!res.ok) throw new Error(`Could not load notifications (HTTP ${res.status})`);
+  return (await res.json()) as NotificationFeed;
+}
+
+/** Mark one row read. Only the recipient may; the API answers 403 otherwise. */
+export async function markNotificationRead(
+  id: string,
+  token: string,
+): Promise<NotificationApi> {
+  const res = await fetch(`${API_BASE_URL}/api/notifications/${encodeURIComponent(id)}/read`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) throw new Error(`Could not mark the notification read (HTTP ${res.status})`);
+  return (await res.json()) as NotificationApi;
+}
+
+/** Mark every unread row read, returning how many changed. */
+export async function markAllNotificationsRead(token: string): Promise<number> {
+  const res = await fetch(`${API_BASE_URL}/api/notifications/read-all`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) throw new Error(`Could not mark the notifications read (HTTP ${res.status})`);
+  const { updated } = (await res.json()) as { updated: number };
+  return updated;
+}
+
 /**
  * Attach the on-chain dispute id that `dispute.raise` returned to the row.
  *

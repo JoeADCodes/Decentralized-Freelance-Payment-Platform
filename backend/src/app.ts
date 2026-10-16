@@ -8,10 +8,12 @@ import { isAllowedOrigin, parseList } from "./lib/access";
 import { jsonReplacer } from "./lib/json";
 import { errorHandler } from "./middleware/errorHandler";
 import { usersRouter } from "./routes/users";
+import { directoryRouter } from "./routes/directory";
 import { jobsRouter } from "./routes/jobs";
 import { escrowRouter } from "./routes/escrow";
 import { disputesRouter } from "./routes/disputes";
 import { reputationRouter } from "./routes/reputation";
+import { notificationsRouter } from "./routes/notifications";
 
 export function createApp() {
   const app = express();
@@ -45,11 +47,17 @@ export function createApp() {
 
   app.get("/health", (_req, res) => res.json({ status: "ok" }));
 
+  // The directory is `GET /api/users` (issue #68) and the profile/ auth routes
+  // live on the same base path. Both are mounted: `usersRouter` has no `/`
+  // route, so a directory listing falls through to the router below it, while
+  // `/api/users/challenge` and `/api/users/:address` are still matched first.
   app.use("/api/users", usersRouter);
+  app.use("/api/users", directoryRouter);
   app.use("/api/jobs", jobsRouter);
   app.use("/api/escrow", escrowRouter);
   app.use("/api/disputes", disputesRouter);
   app.use("/api/reputation", reputationRouter);
+  app.use("/api/notifications", notificationsRouter);
 
   app.use(errorHandler);
 

@@ -194,6 +194,38 @@ model IndexerDeadLetter {
 }
 
 // ---------------------------------------------------------------------------
+// Notification — per-user feed of indexed escrow and dispute events (issue #66)
+//
+// State changes were only visible by reloading a job page, so "did my client
+// fund yet?" meant watching the chain by hand. The indexer now writes one row
+// per participant per event, which makes the feed persistent: it survives a
+// restart and does not depend on a client having been open when the event
+// happened.
+// ---------------------------------------------------------------------------
+model Notification {
+  /// Deterministic key `<event id>:<address>`, so an event replayed after a
+  /// cursor rewind upserts instead of duplicating the feed.
+  id        String   @id
+  /// Recipient: the Stellar address the notification is for.
+  address   String
+  /// Indexed event name (`funded`, `milestone_released`, …) — docs/EVENTS.md.
+  /// Kept alongside the rendered title so the feed can be filtered or reworded
+  /// later without re-deriving the event.
+  type      String
+  title     String
+  body      String?
+  /// Escrow the event belongs to, and the off-chain job when one exists, so the
+  /// feed can link straight to the job it is about.
+  escrowId  BigInt?
+  jobId     String?
+  readAt    DateTime?
+  createdAt DateTime @default(now())
+
+  // The feed query is "this address's notifications, newest first".
+  @@index([address, createdAt])
+}
+
+// ---------------------------------------------------------------------------
 // AuthNonce — single-use, short-lived challenge nonces for wallet auth
 // ---------------------------------------------------------------------------
 model AuthNonce {

@@ -61,6 +61,31 @@ export function sumAmounts(amounts: Array<number | string>, decimals: number): b
 }
 
 /**
+ * Render an integer base-unit amount as whole units for an asset symbol.
+ *
+ * Contract events carry amounts in base units (stroops) because that is what
+ * they emit; a human reads whole units. An unregistered symbol falls back to the
+ * raw value rather than guessing decimal places.
+ */
+export function formatBaseUnitsForAsset(
+  base: string | number | bigint,
+  symbol: string | null | undefined,
+): string {
+  if (!symbol) return String(base);
+  let decimals: number;
+  try {
+    decimals = getAsset(symbol).decimals;
+  } catch {
+    return String(base);
+  }
+  try {
+    return formatAmount(typeof base === "bigint" ? base : BigInt(base), decimals);
+  } catch {
+    return String(base);
+  }
+}
+
+/**
  * Render integer base units as a plain decimal string — the exact form to store
  * in a Prisma `Decimal` column or return to a client. `3000000` at 7 decimals
  * becomes `"0.3"`; trailing fractional zeros are trimmed.

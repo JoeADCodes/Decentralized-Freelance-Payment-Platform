@@ -1,5 +1,17 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { authenticate, buildJobsQuery, createDispute, createJob, linkDisputeId, submitRating } from "./api";
+import {
+  authenticate,
+  buildDirectoryQuery,
+  buildJobsQuery,
+  createDispute,
+  createJob,
+  fetchDirectory,
+  fetchNotifications,
+  linkDisputeId,
+  markAllNotificationsRead,
+  markNotificationRead,
+  submitRating,
+} from "./api";
 
 describe("buildJobsQuery", () => {
   it("omits empty filters", () => {
@@ -26,6 +38,132 @@ describe("buildJobsQuery", () => {
     expect(params.get("page")).toBe("2");
     expect(params.get("limit")).toBe("10");
     expect(qs.startsWith("?")).toBe(true);
+  });
+});
+
+describe("buildDirectoryQuery", () => {
+  it("omits empty values and encodes the rest", () => {
+    expect(buildDirectoryQuery()).toBe("");
+    expect(buildDirectoryQuery({ q: "", sort: undefined })).toBe("");
+    expect(
+      buildDirectoryQuery({ q: "ada lovelace", sort: "ratings", order: "asc", page: 2, limit: 20 }),
+    ).toBe("?q=ada+lovelace&sort=ratings&order=asc&page=2&limit=20");
+  });
+});
+
+describe("fetchDirectory", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("reads the public directory with no token", async () => {
+    const fetchMock = vi.fn(async () =>
+      new Response(
+        JSON.stringify({
+          users: [
+            {
+              id: "u1",
+              stellarAddress: "GADA",
+              displayName: "Ada",
+              bio: null,
+              createdAt: "2026-01-02T00:00:00.000Z",
+              averageScore: 4.5,
+              totalRatings: 2,
+              jobsAsFreelancer: 3,
+              jobsAsClient: 1,
+            },
+          ],
+          page: 1,
+          limit: 20,
+          total: 1,
+          hasMore: false,
+          sort: "reputation",
+          order: "desc",
+        }),
+        { status: 200 },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await fetchDirectory({ q: "ada", sort: "name" });
+
+    expect(result.users[0]).toMatchObject({ averageScore: 4.5, totalRatings: 2 });
+    expect(result.total).toBe(1);
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toContain("/api/users?q=ada&sort=name");
+    // The directory is public — no Authorization header is sent.
+    expect(init.headers).toBeUndefined();
+  });
+
+  it("throws with the status when the API rejects the query", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify({ error: "bad sort" }), { status: 400 })),
+    );
+
+    await expect(fetchDirectory({ sort: "nope" as never })).rejects.toThrow(/HTTP 400/);
+  });
+});
+
+describe("notification feed", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("fetches the caller's feed with the bearer token", async () => {
+    const fetchMock = vi.fn(async () =>
+      new Response(JSON.stringify({ unread: 1, notifications: [] }), { status: 200 }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const feed = await fetchNotifications("jwt-1");
+
+    expect(feed.unread).toBe(1);
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toContain("/api/notifications");
+    // The address comes from the token; there is no parameter in the URL to spoof.
+    expect(url).not.toContain("?");
+    expect((init.headers as Record<string, string>).Authorization).toBe("Bearer jwt-1");
+  });
+
+  it("marks one row read by its id", async () => {
+    const fetchMock = vi.fn(async () =>
+      new Response(
+        JSON.stringify({ id: "evt-7:GVIEWER", readAt: "2026-01-07T11:00:00.000Z" }),
+        { status: 200 },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const row = await markNotificationRead("evt-7:GVIEWER", "jwt-1");
+
+    expect(row.readAt).toBe("2026-01-07T11:00:00.000Z");
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    // The id is a composite key, so it is percent-encoded on the way out.
+    expect(url).toContain("/api/notifications/evt-7%3AGVIEWER/read");
+    expect(init.method).toBe("POST");
+    expect((init.headers as Record<string, string>).Authorization).toBe("Bearer jwt-1");
+  });
+
+  it("marks every unread row read and reports how many changed", async () => {
+    const fetchMock = vi.fn(async () =>
+      new Response(JSON.stringify({ updated: 3 }), { status: 200 }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    expect(await markAllNotificationsRead("jwt-1")).toBe(3);
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toContain("/api/notifications/read-all");
+    expect(init.method).toBe("POST");
+  });
+
+  it("throws with the status when a read cannot be recorded", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify({ error: "forbidden" }), { status: 403 })),
+    );
+
+    await expect(markNotificationRead("evt-7:GOTHER", "jwt-1")).rejects.toThrow(/HTTP 403/);
   });
 });
 

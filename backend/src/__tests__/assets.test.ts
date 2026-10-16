@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   formatAmount,
+  formatBaseUnitsForAsset,
   getAsset,
   sumAmounts,
   toBaseUnits,
@@ -50,5 +51,29 @@ describe("exact money arithmetic", () => {
     expect(formatAmount(20_000_000n, 7)).toBe("2");
     expect(formatAmount(0n, 7)).toBe("0");
     expect(formatAmount(123_456_789n, 7)).toBe("12.3456789");
+  });
+});
+
+// Contract events carry amounts in base units; a notification body has to show a
+// human whole units (issue #66).
+describe("formatBaseUnitsForAsset", () => {
+  it("converts base units using the asset's decimals", () => {
+    expect(formatBaseUnitsForAsset(25_000_000n, "USDC")).toBe("2.5");
+    expect(formatBaseUnitsForAsset(25_000_000, "usdc")).toBe("2.5");
+    expect(formatBaseUnitsForAsset("15000000", "XLM")).toBe("1.5");
+  });
+
+  it("falls back to the raw value when the asset is unknown or missing", () => {
+    // Guessing decimal places for an unrecognised symbol would print a wrong
+    // amount, which is worse than printing the base units it actually got.
+    expect(formatBaseUnitsForAsset(25_000_000n, "DOGE")).toBe("25000000");
+    expect(formatBaseUnitsForAsset(25_000_000n, null)).toBe("25000000");
+    expect(formatBaseUnitsForAsset(25_000_000n, undefined)).toBe("25000000");
+  });
+
+  it("falls back rather than throwing on a non-numeric amount", () => {
+    expect(formatBaseUnitsForAsset("not-a-number" as unknown as bigint, "USDC")).toBe(
+      "not-a-number",
+    );
   });
 });
